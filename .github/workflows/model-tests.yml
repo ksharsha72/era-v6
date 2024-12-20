@@ -1,0 +1,103 @@
+name: Model Tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [3.9]
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v2
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Cache pip packages
+      uses: actions/cache@v2
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest torch torchvision matplotlib numpy
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+    - name: Run model parameter check
+      run: |
+        python -c "
+        from model2 import Model
+        model = Model()
+        total_params = sum(p.numel() for p in model.parameters())
+        assert total_params < 20000, f'Model has {total_params} parameters, should be less than 20000'
+        print(f'✓ Model has {total_params} parameters (less than 20000)')"
+
+    - name: Check batch normalization
+      run: |
+        python -c "
+        from model2 import Model
+        import torch.nn as nn
+        model = Model()
+        has_batchnorm = any(isinstance(m, nn.BatchNorm2d) for m in model.modules())
+        assert has_batchnorm, 'Model should have BatchNormalization layers'
+        print('✓ Model includes batch normalization layers')"
+
+    - name: Check model architecture
+      run: |
+        python -c "
+        from model2 import Model
+        import torch
+        model = Model()
+        # Test input
+        x = torch.randn(1, 1, 28, 28)
+        # Test forward pass
+        output = model(x)
+        assert output.shape == (1, 10), f'Expected output shape (1, 10), got {output.shape}'
+        print('✓ Model architecture is correct')"
+
+    - name: Run all tests
+      run: |
+        pytest tests/test_model2.py -v
+
+    - name: Check image augmentation
+      run: |
+        python -c "
+        from torchvision import transforms
+        transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.RandomCrop(size=28),
+            transforms.RandomRotation(degrees=7),
+            transforms.ColorJitter(brightness=0.2, contrast=0.2),
+            transforms.Normalize((0.1307,), (0.3081,))
+        ])
+        has_augmentation = any(isinstance(t, (transforms.RandomCrop, transforms.RandomRotation, transforms.ColorJitter)) 
+                             for t in transform.transforms)
+        assert has_augmentation, 'Training should include image augmentation'
+        print('✓ Image augmentation is properly configured')"
+
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v2
+      with:
+        name: test-results
+        path: |
+          .pytest_cache
+          __pycache__
+          *.log
+
+    - name: Notify on failure
+      if: failure()
+      run: |
+        echo "::error::Tests failed! Please check the test results for more details." 
