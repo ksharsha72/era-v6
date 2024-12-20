@@ -1,0 +1,48 @@
+name: Python application
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.9'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest torch torchvision
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        
+    - name: Run tests
+      run: |
+        pytest tests/test_model2.py -v
+
+    - name: Check model parameters
+      run: |
+        python -c "
+        from model2 import Model
+        model = Model()
+        total_params = sum(p.numel() for p in model.parameters())
+        assert total_params < 20000, f'Model has {total_params} parameters'
+        print(f'Total parameters: {total_params}')"
+
+    - name: Verify model architecture
+      run: |
+        python -c "
+        from model2 import Model
+        import torch.nn as nn
+        model = Model()
+        has_batchnorm = any(isinstance(m, nn.BatchNorm2d) for m in model.modules())
+        assert has_batchnorm, 'Model should have BatchNormalization'
+        print('Model architecture verification passed')" 
